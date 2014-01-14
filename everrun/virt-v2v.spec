@@ -1,8 +1,7 @@
-%define stratus_major %(echo     ${STRATUS_MAJOR:-7})
-%define stratus_minor %(echo     ${STRATUS_MINOR:-0})
+%define stratus_major %(echo     ${STRATUS_MAJOR:-0})
+%define stratus_minor %(echo     ${STRATUS_MINOR:-1})
 %define stratus_patch %(echo     ${STRATUS_PATCH:-0})
-%define stratus_build %(echo     ${STRATUS_BUILD:-0})
-%define stratus_release ft.%{stratus_major}.%{stratus_minor}.%{stratus_patch}.%{stratus_build}
+%define stratus_release ft.%{stratus_major}.%{stratus_minor}.%{stratus_patch}
 
 Name:           virt-v2v
 Version:        0.8.9
