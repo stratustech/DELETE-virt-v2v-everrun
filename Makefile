@@ -37,6 +37,7 @@ rpm:
 	mkdir -p BUILD RPMS BUILDROOT; \
 	STRATUS_MAJOR=$(MAJOR_REV) STRATUS_MINOR=$(MINOR_REV) STRATUS_PATCH=$(PATCH_REV)\
 		rpmbuild --define "_topdir `pwd`" -ba SPECS/virt-v2v.spec --target=x86_64
+	cd $(PWD)
 clean:
 	rm -rf build
 
