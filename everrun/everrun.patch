@@ -1,7 +1,7 @@
 diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm virt-v2v-v0.8.9.new/lib/Sys/VirtConvert/Connection/EverRunTarget.pm
 --- virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm	1969-12-31 19:00:00.000000000 -0500
-+++ virt-v2v-v0.8.9.new/lib/Sys/VirtConvert/Connection/EverRunTarget.pm	2014-01-13 13:49:45.000000000 -0500
-@@ -0,0 +1,934 @@
++++ virt-v2v-v0.8.9.new/lib/Sys/VirtConvert/Connection/EverRunTarget.pm	2014-01-20 21:37:52.000000000 -0500
+@@ -0,0 +1,968 @@
 +# Sys::VirtConvert::Connection::EverRunTarget
 +# Copyright (C) 2013 Stratus Technologies Inc.
 +#
@@ -24,6 +24,7 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +
 +package everrun_util;
 +use Sys::VirtConvert::Util qw(:DEFAULT rhev_helper);
++use Locale::TextDomain 'virt-v2v';
 +sub get_uuid
 +{
 +    logmsg NOTICE, "EverRunTarget:get_uuid";
@@ -43,18 +44,65 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +sub get_doh_session
 +{
 +    logmsg NOTICE, "EverRunTarget:get_doh_session";
-+    my $doh_cred_file = "/root/creds";
++    my $doh_cred_file = "/shared/creds";
 +    unless (-e $doh_cred_file) {
 +	v2vdie __('Failed: Everrun Doh credentials file does not exist');
 +    }
 +    open my $file, '<', $doh_cred_file; 
 +    my $pw = <$file>;
 +    close $file;
-+    my $cmd_curl_login = "curl  -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='XML'><request id='1' target='session'><login><username>root</username><password>$pw</password></login></request></requests>\" http://localhost/doh/";
-+    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl_login);    
-+    v2vdie __x('Failed get cookie file for Everrun doh login '.
-+	       'Error was: {error}',
-+	       error => $eh->output()) if $eh->status() != 0;
++    my $cmd_curl_login = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='XML'><request id='1' target='session'><login><username>root</username><password>$pw</password></login></request></requests>\" http://localhost/doh/";
++    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl_login);
++    v2vdie __x('Failed getting cookie file for Everrun Doh login '.
++	       'Error was: '.$eh->output()) if $eh->status() != 0;
++    my $curl_resp = $eh->output();
++    $curl_resp =~ m/login\s+status=\"(.*)\"/;
++    unless (lc($1) eq 'ok') {
++	v2vdie __x('Error: Everrun Doh login failed with root and pw '.$pw.
++		   ' Error was: '.$curl_resp);
++    }
++    return;
++}
++
++sub do_doh_request
++{
++    get_doh_session();
++    my ($doh_cmd) = @_;
++    my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"$doh_cmd\" http://localhost/doh/";
++    logmsg NOTICE, "EverRunTarget::Util::do_doh_request:cmd_curl = $cmd_curl";
++#    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl);
++#    v2vdie __x('Error: failed to connect to Everrun Doh '.
++#	       'Error was: '.$eh->output()) if $eh->status() != 0;
++#    my $curl_resp = $eh->output();
++    my $eh = `$cmd_curl`;
++    v2vdie __x('Error: failed to connect to Everrun Doh '.
++	       'Error was: '.$eh) if $? != 0;
++    my $curl_resp = $eh;
++    $curl_resp =~ m/status=\"(\S+)\"\s+/;
++    unless (lc($1) eq 'ok') {
++	trigger_doh_alert();
++	v2vdie __x('Error: Everrun Doh command failed status was: '.$1.
++		   ' Error was: '.$curl_resp);
++    }
++    logmsg NOTICE, "EverRunTarget::Util::do_doh_request:curl_resp = $curl_resp";
++    return $curl_resp;
++}
++
++sub trigger_doh_alert 
++{
++    get_doh_session();
++    my $doh_cmd = "<requests output='XML'><request id='1' target='supernova'><generate-p2v-alert /></request></requests>";
++    my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"$doh_cmd\" http://localhost/doh/";
++    logmsg NOTICE, "EverRunTarget::Util::do_doh_request:cmd_curl = $cmd_curl";
++    my $eh = `$cmd_curl`;
++    if ($? != 0) {
++	logmsg NOTICE, "Error: failed to connect to Everrun Doh Error was: $eh";
++    }
++    my $curl_resp = $eh;
++    $curl_resp =~ m/status=\"(\S+)\"\s+/;
++    unless (lc($1) eq 'ok') {
++	logmsg NOTICE, "Error: Everrun Doh command failed status was: $1 Error was: $curl_resp";
++    }
 +    return;
 +}
 +
@@ -102,7 +150,7 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +
 +sub write
 +{
-+    logmsg NOTICE, "EverRunTarget::WriteStream:write";
++    logmsg DEBUG, "EverRunTarget::WriteStream:write";
 +    my $self = shift;
 +    my ($buf) = @_;
 +
@@ -237,31 +285,20 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +    logmsg NOTICE, "EverRunTarget::Vol:new";
 +    my $class = shift;
 +    my ($mountdir, $volname, $format, $insize, $sparse) = @_;
-+
 +    my $imageuuid = everrun_util::get_uuid();
-+
-+    logmsg NOTICE, "EverRunTarget::Vol:new name=$volname mountdir=$mountdir, format=$format, insize=$insize, sparse=$sparse";
-+
 +    #Fix size for Everrun
 +    my $newsize = ceil($insize/(1024*1024))+1024;
-+    everrun_util::get_doh_session();
-+    my $cmd_curl_create_vol = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='XML'><request id='1' target='volume'><create><volume from='storagegroup:o21'><size>$newsize</size><hard>true</hard><name>$volname</name><description>p2v created disk</description></volume></create></request></requests>\" http://localhost/doh/";
-+    logmsg NOTICE, "EverRunTarget::Vol:new cmd_curl_create_vol = $cmd_curl_create_vol";
-+    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl_create_vol);
-+    v2vdie __x('Failed to create new Everrun volume '.
-+	       'Error was: {error}',
-+	       error => $eh->output()) if $eh->status() != 0;
++    my $cmd_curl_create_vol = "<requests output='XML'><request id='1' target='volume'><create><volume from='storagegroup:o21'><size>$newsize</size><hard>true</hard><name>$volname</name><description>p2v created disk</description></volume></create></request></requests>";
++    my $curl_resp = everrun_util::do_doh_request($cmd_curl_create_vol);
 +    my $volpath ="";
-+    my $ret = $eh->output();
-+    $ret =~ m/path=\"(.*)\"/;
++    $curl_resp =~ m/path=\"(.*)\"/;
 +    $volpath = $1;
-+    logmsg NOTICE, "EverRunTarget::Vol:new volpath = $volpath";
-+    $ret =~ m/id=\"(volume:o\d+)\"/;
++    $curl_resp =~ m/id=\"(volume:o\d+)\"/;
 +    my $voluuid = $1;
-+    logmsg NOTICE, "EverRunTarget::Vol:new voluuid = $voluuid";    
++    logmsg NOTICE, "EverRunTarget::Vol:new volpath = $volpath voluuid = $voluuid";
 +
 +    my $cmd_qemu_img = "qemu-img info $volpath";
-+    $eh = Sys::VirtConvert::ExecHelper->run($cmd_qemu_img);
++    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_qemu_img);
 +    v2vdie __x('Failed to create new Everrun volume '.
 +	       'Error was: {error}',
 +	       error => $eh->output()) if $eh->status() != 0;
@@ -580,18 +617,13 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +    my $ostype = _get_os_type($g, $root);
 +    my $vmtype = _get_vm_type($g, $root, $meta);
 +
-+    everrun_util::get_doh_session();    
-+    my $cmd_curl_create_guest =  "curl  -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='XML'><request id='1' target='vm'><create-dynamic><name>$output_name</name><description></description><virtual-cpus>$ncpus</virtual-cpus><memory>$memsize</memory><availability-level>FT</availability-level><virtualization>hvm</virtualization><autostart>false</autostart>";
++    my $cmd_curl_create_guest =  "<requests output='XML'><request id='1' target='vm'><create-dynamic><name>$output_name</name><description></description><virtual-cpus>$ncpus</virtual-cpus><memory>$memsize</memory><availability-level>FT</availability-level><virtualization>hvm</virtualization><autostart>false</autostart>";
 +
 +    my $disk_xml = $self->_disks($meta, $guestcaps);
 +    my $network_xml = $self->_networks($meta, $config, $guestcaps);
 +    
-+    $cmd_curl_create_guest .= $disk_xml.$network_xml."</create-dynamic></request></requests>\" http://localhost/doh/";
-+    logmsg NOTICE, "EverRunTarget:create_guest: cmd_curl_create_guest = $cmd_curl_create_guest";
-+
-+    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl_create_guest);
-+    v2vdie __x("Failed $cmd_curl_create_guest ".
-+	       "Error was: ".$eh->output()) if $eh->status() != 0;
++    $cmd_curl_create_guest .= $disk_xml.$network_xml."</create-dynamic></request></requests>";
++    my $curl_resp = everrun_util::do_doh_request($cmd_curl_create_guest);
 +}
 +
 +# Work out how to describe the guest OS to EVERRUN. Possible values are:
@@ -901,9 +933,9 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +    my ($meta, $config, $guestcaps) = @_;
 +    my $xml = new XML::Simple;
 +
-+    everrun_util::get_doh_session();
-+    my $xml_data = `curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='XML'><request id='1' target='supernova'><watch /></request></requests>\" http://localhost/doh/`;    
-+    my $data = $xml->XMLin($xml_data,
++    my $cmd_curl_topology = "<requests output='XML'><request id='1' target='supernova'><watch /></request></requests>";
++    my $curl_resp = everrun_util::do_doh_request($cmd_curl_topology);
++    my $data = $xml->XMLin($curl_resp,
 +			   KeyAttr => [],
 +			   ForceArray => ['disk', 'pdisk', 'alert', 'log', 'timestamp', 'host', 'vm', 'license', "local-network",
 +					  'q-link', 'quorum-server', 'sharedstorage', 'link', 'volume', 'volumeelement', 'user', 'lansegment',
@@ -914,9 +946,11 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +					  'sharedstoragestats', 'sharednetworkstats','hoststats', 'kit', 'account', 'controller', 'enclosure',
 +					  'rollingrebootmonitor', 'storagegroup'],
 +	);
++    logmsg NOTICE, "EverRunTarget:_networks curl_resp="+$curl_resp;
 +    foreach my $network (@{$data->{response}->{output}->{sharednetwork}}) {
 +	if ($network->{withPortal} eq "true") {
 +	    my $xml_network = "<networks><network ref=\'".$network->{id}."\'/></networks>";
++	    logmsg NOTICE, "EverRunTarget:_networks xml_network="+$xml_network;
 +	    return $xml_network;
 +	}
 +    }
