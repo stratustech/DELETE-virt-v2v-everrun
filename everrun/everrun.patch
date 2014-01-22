@@ -954,7 +954,7 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +1;
 diff -Naur virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl virt-v2v-v0.8.9.new/p2v/server/virt-p2v-server.pl
 --- virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl	2012-10-10 09:23:23.000000000 -0400
-+++ virt-v2v-v0.8.9.new/p2v/server/virt-p2v-server.pl	2014-01-13 13:44:21.000000000 -0500
++++ virt-v2v-v0.8.9.new/p2v/server/virt-p2v-server.pl	2014-01-22 14:32:21.000000000 -0500
 @@ -33,6 +33,7 @@
  use Sys::VirtConvert::Converter;
  use Sys::VirtConvert::Connection::LibVirtTarget;
@@ -963,7 +963,15 @@ diff -Naur virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl virt-v2v-v0.8.9.ne
  use Sys::VirtConvert::GuestfsHandle;
  use Sys::VirtConvert::Util qw(:DEFAULT logmsg_init logmsg_level);
  
-@@ -330,6 +331,8 @@
+@@ -91,6 +92,7 @@
+ my $stderr;
+ my $stderr_filename = '/var/log/virt-p2v-server.'.time().'.log';
+ 
++age_out_log_files();
+ if(!open($stderr, '>', $stderr_filename)) {
+     $stderr = undef;
+     v2vdie __x("Unable to open log file {file}: {error}",
+@@ -330,6 +332,8 @@
              ('qemu:///system', $storage);
      } elsif ($method eq 'rhev') {
          $target = new Sys::VirtConvert::Connection::RHEVTarget($storage);
@@ -972,6 +980,29 @@ diff -Naur virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl virt-v2v-v0.8.9.ne
      } else {
          die(__x("Profile {profile} specifies invalid method {method}.\n",
                  profile => $profile, method => $method));
+@@ -535,6 +539,22 @@
+     print $msg,"\n";
+ }
+ 
++sub age_out_log_files
++{
++    my %logFiles = ();
++    foreach my $file (glob("/var/log/virt-p2v-server*.log*")) {
++        my $file_mtime = (stat($file))[9];
++        $logFiles{$file_mtime} = $file;
++    }
++    my $file_keep = 0;
++    for my $key ( sort {$a<=>$b} keys %logFiles) {
++        if ($file_keep >= 5){
++            unlink $logFiles{$key};
++        }
++        $file_keep++;
++    }
++}
++
+ =head1 SEE ALSO
+ 
+ L<virt-v2v(1)>,
 diff -Naur virt-v2v-v0.8.9.orig/v2v/virt-v2v.conf virt-v2v-v0.8.9.new/v2v/virt-v2v.conf
 --- virt-v2v-v0.8.9.orig/v2v/virt-v2v.conf	2012-10-10 09:23:23.000000000 -0400
 +++ virt-v2v-v0.8.9.new/v2v/virt-v2v.conf	2014-01-09 15:09:58.000000000 -0500

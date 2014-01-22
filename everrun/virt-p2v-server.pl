@@ -92,6 +92,7 @@ logmsg NOTICE, __x("{program} started.", program => 'p2v-server');
 my $stderr;
 my $stderr_filename = '/var/log/virt-p2v-server.'.time().'.log';
 
+age_out_log_files();
 if(!open($stderr, '>', $stderr_filename)) {
     $stderr = undef;
     v2vdie __x("Unable to open log file {file}: {error}",
@@ -536,6 +537,22 @@ sub p2v_return_err
     $msg = "ERROR $msg";
     logmsg DEBUG, __x('Sent: {msg}', msg => $msg);
     print $msg,"\n";
+}
+
+sub age_out_log_files
+{
+    my %logFiles = ();
+    foreach my $file (glob("/var/log/virt-p2v-server*.log*")) {
+        my $file_mtime = (stat($file))[9];
+        $logFiles{$file_mtime} = $file;
+    }
+    my $file_keep = 0;
+    for my $key ( sort {$a<=>$b} keys %logFiles) {
+        if ($file_keep >= 5){
+            unlink $logFiles{$key};
+        }
+        $file_keep++;
+    }
 }
 
 =head1 SEE ALSO
