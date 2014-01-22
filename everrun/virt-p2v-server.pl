@@ -547,7 +547,7 @@ sub age_out_log_files
         $logFiles{$file_mtime} = $file;
     }
     my $file_keep = 0;
-    for my $key ( sort {$a<=>$b} keys %logFiles) {
+    for my $key ( sort {$b<=>$a} keys %logFiles) {
         if ($file_keep >= 5){
             unlink $logFiles{$key};
         }

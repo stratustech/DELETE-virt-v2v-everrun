@@ -954,7 +954,7 @@ diff -Naur virt-v2v-v0.8.9.orig/lib/Sys/VirtConvert/Connection/EverRunTarget.pm 
 +1;
 diff -Naur virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl virt-v2v-v0.8.9.new/p2v/server/virt-p2v-server.pl
 --- virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl	2012-10-10 09:23:23.000000000 -0400
-+++ virt-v2v-v0.8.9.new/p2v/server/virt-p2v-server.pl	2014-01-22 14:32:21.000000000 -0500
++++ virt-v2v-v0.8.9.new/p2v/server/virt-p2v-server.pl	2014-01-22 15:21:37.000000000 -0500
 @@ -33,6 +33,7 @@
  use Sys::VirtConvert::Converter;
  use Sys::VirtConvert::Connection::LibVirtTarget;
@@ -992,7 +992,7 @@ diff -Naur virt-v2v-v0.8.9.orig/p2v/server/virt-p2v-server.pl virt-v2v-v0.8.9.ne
 +        $logFiles{$file_mtime} = $file;
 +    }
 +    my $file_keep = 0;
-+    for my $key ( sort {$a<=>$b} keys %logFiles) {
++    for my $key ( sort {$b<=>$a} keys %logFiles) {
 +        if ($file_keep >= 5){
 +            unlink $logFiles{$key};
 +        }
