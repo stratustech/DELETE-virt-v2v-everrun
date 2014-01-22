@@ -21,9 +21,11 @@ use warnings;
 package everrun_util;
 use Sys::VirtConvert::Util qw(:DEFAULT rhev_helper);
 use Locale::TextDomain 'virt-v2v';
+use JSON qw( decode_json );
+use Data::Dumper;
 sub get_uuid
 {
-    logmsg NOTICE, "EverRunTarget:get_uuid";
+    logmsg NOTICE, "EverRunTarget::Util:get_uuid";
     my $uuidgen;
     open($uuidgen, '-|', 'uuidgen') or die("Unable to execute uuidgen: $!");
 
@@ -39,7 +41,7 @@ sub get_uuid
 
 sub get_doh_session
 {
-    logmsg NOTICE, "EverRunTarget:get_doh_session";
+    logmsg NOTICE, "EverRunTarget::Util:get_doh_session";
     my $doh_cred_file = "/shared/creds";
     unless (-e $doh_cred_file) {
 	v2vdie __('Failed: Everrun Doh credentials file does not exist');
@@ -47,15 +49,14 @@ sub get_doh_session
     open my $file, '<', $doh_cred_file; 
     my $pw = <$file>;
     close $file;
-    my $cmd_curl_login = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='XML'><request id='1' target='session'><login><username>root</username><password>$pw</password></login></request></requests>\" http://localhost/doh/";
+    my $cmd_curl_login = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='NEWJSON'><request id='1' target='session'><login><username>root</username><password>$pw</password></login></request></requests>\" http://localhost/doh/";
     my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl_login);
     v2vdie __x('Failed getting cookie file for Everrun Doh login '.
 	       'Error was: '.$eh->output()) if $eh->status() != 0;
-    my $curl_resp = $eh->output();
-    $curl_resp =~ m/login\s+status=\"(.*)\"/;
-    unless (lc($1) eq 'ok') {
-	v2vdie __x('Error: Everrun Doh login failed with root and pw '.$pw.
-		   ' Error was: '.$curl_resp);
+    my $curl_resp = decode_json($eh->output());
+    unless (lc($curl_resp->{'responses'}{'response'}{'login'}{'status'}) eq 'ok') {
+	v2vdie __x('Error: Everrun Doh login failed'.
+		   ' Error was: '.Dumper($curl_resp));
     }
     return;
 }
@@ -64,23 +65,18 @@ sub do_doh_request
 {
     get_doh_session();
     my ($doh_cmd) = @_;
-    my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"$doh_cmd\" http://localhost/doh/";
+    my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='NEWJSON'>$doh_cmd</requests>\" http://localhost/doh/";
     logmsg NOTICE, "EverRunTarget::Util::do_doh_request:cmd_curl = $cmd_curl";
-#    my $eh = Sys::VirtConvert::ExecHelper->run($cmd_curl);
-#    v2vdie __x('Error: failed to connect to Everrun Doh '.
-#	       'Error was: '.$eh->output()) if $eh->status() != 0;
-#    my $curl_resp = $eh->output();
     my $eh = `$cmd_curl`;
     v2vdie __x('Error: failed to connect to Everrun Doh '.
 	       'Error was: '.$eh) if $? != 0;
-    my $curl_resp = $eh;
-    $curl_resp =~ m/status=\"(\S+)\"\s+/;
-    unless (lc($1) eq 'ok') {
+    my $curl_resp = decode_json($eh);
+    logmsg NOTICE, "EverRunTarget::Util::do_doh_request:curl_resp: ".Dumper($curl_resp); 
+    unless (lc($curl_resp->{'responses'}{'response'}{'status'}) eq 'ok') {
 	trigger_doh_alert();
-	v2vdie __x('Error: Everrun Doh command failed status was: '.$1.
-		   ' Error was: '.$curl_resp);
+	my $error_msg = $curl_resp->{'responses'}{'response'}{'error'}{'message'}[0];
+	v2vdie __x('Error: '.$error_msg);
     }
-    logmsg NOTICE, "EverRunTarget::Util::do_doh_request:curl_resp = $curl_resp";
     return $curl_resp;
 }
 
@@ -89,7 +85,7 @@ sub trigger_doh_alert
     get_doh_session();
     my $doh_cmd = "<requests output='XML'><request id='1' target='supernova'><generate-p2v-alert /></request></requests>";
     my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"$doh_cmd\" http://localhost/doh/";
-    logmsg NOTICE, "EverRunTarget::Util::do_doh_request:cmd_curl = $cmd_curl";
+    logmsg NOTICE, "EverRunTarget::Util::trigger_doh_alert:cmd_curl = $cmd_curl";
     my $eh = `$cmd_curl`;
     if ($? != 0) {
 	logmsg NOTICE, "Error: failed to connect to Everrun Doh Error was: $eh";
@@ -284,13 +280,10 @@ sub new
     my $imageuuid = everrun_util::get_uuid();
     #Fix size for Everrun
     my $newsize = ceil($insize/(1024*1024))+1024;
-    my $cmd_curl_create_vol = "<requests output='XML'><request id='1' target='volume'><create><volume from='storagegroup:o21'><size>$newsize</size><hard>true</hard><name>$volname</name><description>p2v created disk</description></volume></create></request></requests>";
+    my $cmd_curl_create_vol = "<request id='1' target='volume'><create><volume from='storagegroup:o21'><size>$newsize</size><hard>true</hard><name>$volname</name><description>p2v created disk</description></volume></create></request>";
     my $curl_resp = everrun_util::do_doh_request($cmd_curl_create_vol);
-    my $volpath ="";
-    $curl_resp =~ m/path=\"(.*)\"/;
-    $volpath = $1;
-    $curl_resp =~ m/id=\"(volume:o\d+)\"/;
-    my $voluuid = $1;
+    my $volpath = $curl_resp->{'responses'}{'response'}{'created'}{'path'};
+    my $voluuid = $curl_resp->{'responses'}{'response'}{'created'}{'id'};
     logmsg NOTICE, "EverRunTarget::Vol:new volpath = $volpath voluuid = $voluuid";
 
     my $cmd_qemu_img = "qemu-img info $volpath";
@@ -613,12 +606,12 @@ sub create_guest
     my $ostype = _get_os_type($g, $root);
     my $vmtype = _get_vm_type($g, $root, $meta);
 
-    my $cmd_curl_create_guest =  "<requests output='XML'><request id='1' target='vm'><create-dynamic><name>$output_name</name><description></description><virtual-cpus>$ncpus</virtual-cpus><memory>$memsize</memory><availability-level>FT</availability-level><virtualization>hvm</virtualization><autostart>false</autostart>";
+    my $cmd_curl_create_guest =  "<request id='1' target='vm'><create-dynamic><name>$output_name</name><description></description><virtual-cpus>$ncpus</virtual-cpus><memory>$memsize</memory><availability-level>FT</availability-level><virtualization>hvm</virtualization><autostart>false</autostart>";
 
     my $disk_xml = $self->_disks($meta, $guestcaps);
     my $network_xml = $self->_networks($meta, $config, $guestcaps);
     
-    $cmd_curl_create_guest .= $disk_xml.$network_xml."</create-dynamic></request></requests>";
+    $cmd_curl_create_guest .= $disk_xml.$network_xml."</create-dynamic></request>";
     my $curl_resp = everrun_util::do_doh_request($cmd_curl_create_guest);
 }
 
@@ -927,27 +920,16 @@ sub _networks
     logmsg NOTICE, "EverRunTarget:_networks";
     my $self = shift;
     my ($meta, $config, $guestcaps) = @_;
-    my $xml = new XML::Simple;
-
-    my $cmd_curl_topology = "<requests output='XML'><request id='1' target='supernova'><watch /></request></requests>";
+    my $cmd_curl_topology = "<request id='1' target='sharednetwork'><select>sharednetwork</select></request>";
     my $curl_resp = everrun_util::do_doh_request($cmd_curl_topology);
-    my $data = $xml->XMLin($curl_resp,
-			   KeyAttr => [],
-			   ForceArray => ['disk', 'pdisk', 'alert', 'log', 'timestamp', 'host', 'vm', 'license', "local-network",
-					  'q-link', 'quorum-server', 'sharedstorage', 'link', 'volume', 'volumeelement', 'user', 'lansegment',
-					  'tz', 'buggrab', 'template', 'ntp-server', 'repository', 'vmsnapshotnetworkconfig',
-					  'diskslot', 'vbd', 'sensor', 'vif', 'aggregration', 'supernova', 'vmsnapshotvolumeconfig',
-					  'storage','card', 'cpu', 'networkport', 'storageport', 'localnetwork','vmsnapshot',
-					  'storagepath', 'sharednetwork','supernovastats','vmstats', 'licensepanel','volumesnapshot',
-					  'sharedstoragestats', 'sharednetworkstats','hoststats', 'kit', 'account', 'controller', 'enclosure',
-					  'rollingrebootmonitor', 'storagegroup'],
-	);
-    logmsg NOTICE, "EverRunTarget:_networks curl_resp="+$curl_resp;
-    foreach my $network (@{$data->{response}->{output}->{sharednetwork}}) {
-	if ($network->{withPortal} eq "true") {
-	    my $xml_network = "<networks><network ref=\'".$network->{id}."\'/></networks>";
-	    logmsg NOTICE, "EverRunTarget:_networks xml_network="+$xml_network;
-	    return $xml_network;
+    my $sharednetwork = $curl_resp->{'responses'}{'response'}{'output'}{'sharednetwork'};
+    foreach my $network (@{$sharednetwork}) {
+	if (JSON::is_bool($network->{'withPortal'})) {
+	    if ($network->{'withPortal'}) {
+		my $xml_network = "<networks><network ref=\'".$network->{'id'}."\'/></networks>";
+		logmsg NOTICE, "EverRunTarget:_networks xml_network="+$xml_network;
+		return $xml_network;
+	    } 
 	}
     }
     v2vdie __x("Failed to find an Everrun network device");
