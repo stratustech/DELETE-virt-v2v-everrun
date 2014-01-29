@@ -63,6 +63,7 @@ sub get_doh_session
 
 sub do_doh_request
 {
+    logmsg NOTICE, "EverRunTarget::Util:do_doh_request";
     get_doh_session();
     my ($doh_cmd) = @_;
     my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"<requests output='NEWJSON'>$doh_cmd</requests>\" http://localhost/doh/";
@@ -80,8 +81,9 @@ sub do_doh_request
     return $curl_resp;
 }
 
-sub trigger_doh_alert 
+sub trigger_doh_alert
 {
+    logmsg NOTICE, "EverRunTarget::Util:trigger_doh_alert";
     get_doh_session();
     my $doh_cmd = "<requests output='XML'><request id='1' target='supernova'><generate-p2v-alert /></request></requests>";
     my $cmd_curl = "curl  -s -b cookie_file -c cookie_file -H \"Content-type: text/xml\" -d \"$doh_cmd\" http://localhost/doh/";
@@ -96,6 +98,25 @@ sub trigger_doh_alert
 	logmsg NOTICE, "Error: Everrun Doh command failed status was: $1 Error was: $curl_resp";
     }
     return;
+}
+
+sub get_primary_host_oid
+{
+    logmsg NOTICE, "EverRunTarget::Util:get_primary_host_oid";
+    my $self = shift;
+    my ($meta, $config, $guestcaps) = @_;
+    my $cmd_curl_topology = "<request id='1' target='host'><select></select></request>";
+    my $curl_resp = everrun_util::do_doh_request($cmd_curl_topology);
+    my $hosts = $curl_resp->{'responses'}{'response'}{'output'}{'host'};
+    foreach my $host (@{$hosts}) {
+	if (JSON::is_bool($host->{'is-primary'}{'value'})) {
+	    if ($host->{'is-primary'}{'value'}) {
+		logmsg NOTICE, $host->{'id'}." is primary\n";
+		return $host->{'id'};
+	    }
+	}
+    }
+    v2vdie __x("Failed to find an Everrun primary host");
 }
 
 package Sys::VirtConvert::Connection::EverRunTarget::WriteStream;
@@ -278,13 +299,17 @@ sub new
     my $class = shift;
     my ($mountdir, $volname, $format, $insize, $sparse) = @_;
     my $imageuuid = everrun_util::get_uuid();
+    my $primary_host_oid = everrun_util::get_primary_host_oid();
     #Fix size for Everrun
-    my $newsize = ceil($insize/(1024*1024))+1024;
-    my $cmd_curl_create_vol = "<request id='1' target='volume'><create><volume from='storagegroup:o21'><size>$newsize</size><hard>true</hard><name>$volname</name><description>p2v created disk</description></volume></create></request>";
+    my $newsize = ceil($insize/(1024*1024))+1;
+    my $cmd_curl_create_vol = "<request id='1' target='volume'><create ><volume from=':o21'><size>$newsize</size><container-size>$newsize</container-size><hard>true</hard><name>$volname</name><image-type>RAW</image-type><description>p2v created disk</description></volume></create></request>";
     my $curl_resp = everrun_util::do_doh_request($cmd_curl_create_vol);
     my $volpath = $curl_resp->{'responses'}{'response'}{'created'}{'path'};
     my $voluuid = $curl_resp->{'responses'}{'response'}{'created'}{'id'};
     logmsg NOTICE, "EverRunTarget::Vol:new volpath = $volpath voluuid = $voluuid";
+
+    my $cmd_curl_set_primary_vol = "<request id='1' target='$voluuid'><set-volume-orig-mirror-copy-src><node>$primary_host_oid</node></set-volume-orig-mirror-copy-src></request>";
+    everrun_util::do_doh_request($cmd_curl_set_primary_vol);
 
     my $cmd_qemu_img = "qemu-img info $volpath";
     my $eh = Sys::VirtConvert::ExecHelper->run($cmd_qemu_img);
@@ -927,7 +952,7 @@ sub _networks
 	if (JSON::is_bool($network->{'withPortal'})) {
 	    if ($network->{'withPortal'}) {
 		my $xml_network = "<networks><network ref=\'".$network->{'id'}."\'/></networks>";
-		logmsg NOTICE, "EverRunTarget:_networks xml_network="+$xml_network;
+		logmsg NOTICE, "EverRunTarget:_networks xml_network=".$xml_network;
 		return $xml_network;
 	    } 
 	}
